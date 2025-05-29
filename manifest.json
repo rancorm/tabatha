@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Tabatha",
+  "description": "Tab wrangler",
+  "version": "1.0.0",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "storage",
+    "alarms"
+  ],
+  "options_page": "options/options.html",
+  "background": {
+    "service_worker": "background.js"
+  }
+}
