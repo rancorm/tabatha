@@ -1,5 +1,6 @@
 // background.js
-console.log("Loaded and background script running");
+
+console.log("Background script running");
 
 // In-memory cache for real-time tracking
 let tabData = {};
@@ -8,11 +9,14 @@ let tabData = {};
 let rootGroups = [];
 
 const defaultRootGroups = [
-  { name: "Today", minDays: 0, maxDays: 0 },
-  { name: "Yesterday", minDays: 1, maxDays: 1 },
-  { name: "Last Week", minDays: 2, maxDays: 6 },
-  { name: "Older", minDays: 7, maxDays: Infinity }
+  { name: "Today", days: 0 },
+  { name: "Yesterday", days: 1  },
+  { name: "Last Week", days: 7 },
+  { name: "Older", days: 14 }
 ];
+
+const msInDay = 24 * 60 * 60 * 1000;
+const debounceTimeout = 30000;
 
 // Helper functions
 const scheduleAlarm = ((hour, minute) => {
@@ -31,7 +35,7 @@ const scheduleAlarm = ((hour, minute) => {
  
   chrome.alarms.create('scheduledTask', { delayInMinutes });
 
-  console.log("Scheduled task will run again in", delayInMinutes, "minutes");
+  console.log("Task will run again in", delayInMinutes, "minutes");
 });
 
 const debounceSave = (() => {
@@ -40,12 +44,12 @@ const debounceSave = (() => {
   return () => {
     clearTimeout(timeout);
 
-    // Save every 30 seconds
+    // Save tab data on timeout
     timeout = setTimeout(() => {
       chrome.storage.local.set({ tabData });
 
       console.log("Save tab data");
-    }, 30000);
+    }, debounceTimeout);
   };
 })();
 
@@ -93,6 +97,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'scheduledTask') {
+    removeOrphanTabData();
     groupTabsByTime();
 
     // Reschedule for the next day
@@ -103,6 +108,17 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
+function createTabGroup(name) {
+  chrome.tabs.create({}, (tab) => {
+    chrome.tabs.group({ tabIds: tab.id }, (groupId) => {
+      chrome.tabGroups.update(groupId, {
+	title: name,
+	collapsed: true
+      });
+    });
+  });
+}
+
 function createTabGroups() {
   chrome.tabGroups.query({}, (groups) => {
     const existingTitles = new Set(groups.map(group => group.title));
@@ -111,31 +127,34 @@ function createTabGroups() {
       .map(group => group.name);
 
     missingGroupNames.forEach(name => {
-      chrome.tabs.create({}, (tab) => {
-        chrome.tabs.group({ tabIds: tab.id }, (groupId) => {
-          chrome.tabGroups.update(groupId, {
-            title: name,
-            collapsed: true
-          });
-        });
-      });
+      createTabGroup(name);
     });
 
     if (missingGroupNames.length) {
       const foundGroups = groups.filter(group =>
         rootGroups.map(g => g.name).includes(group.title)
       );
-      console.log("Found groups:", foundGroups);
-      console.log("Created missing groups:", missingGroupNames);
+      
+      console.log(`Found groups: ${foundGroups}`);
+      console.log(`Create missing groups: ${missingGroupNames}`);
     } else {
       console.log("Groups already exist");
     }
   });
 }
 
+function daysAgo(created, now = Date.now()) {
+  return Math.floor((now - created) / msInDay); 
+}
+
+function ageToGroup(age) {
+  return rootGroups.reduce((best, group) => {
+    return (group.days <= age && (!best || group.days > best.days)) ? group : best;
+  }, null);
+}
+
 function groupTabsByTime() {
   chrome.tabs.query({}, tabs => {
-    const now = Date.now();
     const groups = {};
 
     // Initialize group arrays
@@ -143,29 +162,38 @@ function groupTabsByTime() {
       groups[group.name] = [];
     });
 
-    tabs.forEach(tab => {
-      const td = tabData[tab.id];
-      if (!td) return;
-
-      const created = td.created;
-      const msInDay = 24 * 60 * 60 * 1000;
-      const daysAgo = Math.floor((now - created) / msInDay);
-
-      // Find the matching group
-      const group = rootGroups.find(g =>
-        daysAgo >= g.minDays && daysAgo <= g.maxDays
-      );
-      if (group) {
-        groups[group.name].push(tab.id);
-      }
-    });
-
+    // First, get all existing tab groups and map titles to IDs
     chrome.tabGroups.query({}, existingGroups => {
       const groupTitlesToId = {};
-      existingGroups.forEach(g => {
-        if (g.title) groupTitlesToId[g.title] = g.id;
+
+      existingGroups.forEach(group => {
+        if (group.title) groupTitlesToId[group.title] = group.id;
       });
 
+      tabs.forEach(tab => {
+        const td = tabData[tab.id];
+        
+	if (!td) return;
+
+        const tabAge = daysAgo(td.created);
+        const group = ageToGroup(tabAge);
+
+        if (!group) return;
+
+        // Check if the group already exists and if the tab is already in it
+        const targetGroupId = groupTitlesToId[group.name];
+        
+	if (targetGroupId !== undefined && tab.groupId === targetGroupId) {
+          // Tab is already in the correct group, skip it
+          return;
+        }
+
+        groups[group.name].push(tab.id);
+
+	console.log(`Move tab (id: ${tab.id}) to group "${group.name}"`);
+      });
+
+      // Move tabs to their respective groups
       Object.entries(groups).forEach(([groupName, tabIds]) => {
         if (tabIds.length === 0) return;
 
@@ -181,6 +209,38 @@ function groupTabsByTime() {
   });
 
   console.log("Tabs moved to groups");
+
+}
+
+function removeOrphanTabData() {
+  for (const key in tabData) {
+    if (tabData.hasOwnProperty(key)) {
+      chrome.tabs.get(Number(key), function(tab) {
+	if (chrome.runtime.lastError) {
+	  delete tabData[key];
+
+	  console.log(`Remove orphan tab (id: ${key}) data`);
+	} else {
+	  console.log(`Tab (id: ${key}) is valid`);
+	}
+      });
+    }
+  }
+}
+
+function printTabData() {
+  tabDataLen = Object.keys(tabData).length;
+
+  console.log(`Totals: ${tabDataLen}`);
+
+  for (const key in tabData) {
+    if (tabData.hasOwnProperty(key)) {
+      tab = tabData[key];
+      tabAge = daysAgo(tab.created);
+
+      console.log(`Tab id: ${key}, created: ${tab.created}, age: ${tabAge}`);
+    }
+  }
 }
 
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
@@ -197,19 +257,20 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
       scheduleAlarm(
 	result.scheduledHour,
 	result.scheduledMinute);
+    
+      createTabGroups();
     });
 
-    createTabGroups();
-
-    console.log("Reload root groups");
+    console.log("Reload options");
   }
 });
 
-chrome.runtime.onStartup.addListener(() =>{
+chrome.runtime.onStartup.addListener(() => {
   createTabGroups();
+  removeOrphanTabData();
   groupTabsByTime();
 });
 
-chrome.runtime.onInstalled.addListener(() =>{
+chrome.runtime.onInstalled.addListener(() => {
   createTabGroups();
 });

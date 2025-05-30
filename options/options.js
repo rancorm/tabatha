@@ -17,25 +17,24 @@ document.getElementById('save').addEventListener('click', () => {
   saveGroups();
 });
 
-function createGroupRowHTML(name, minDays, maxDays) {
+function createGroupRowHTML(name, days) {
   return `
     <td><input type="text" value="${name}" class="name"></td>
-    <td><input type="number" value="${minDays}" class="min"></td>
-    <td><input type="number" value="${maxDays === Infinity ? '' : maxDays}" class="max"></td>
-    <td><button type="button" class="delete">-</button></td>
+    <td><input type="number" value="${days}" class="days"></td>
+    <td><button type="button" class="delete">x</button></td>
   `;
 }
 
 function loadGroups() {
   chrome.storage.local.get(['rootGroups'], (result) => {
     const groups = result.rootGroups || [
-      { name: "Today", minDays: 0, maxDays: 0 },
-      { name: "Yesterday", minDays: 1, maxDays: 1 },
-      { name: "Last Week", minDays: 2, maxDays: 6 },
-      { name: "Older", minDays: 7, maxDays: Infinity }
+      { name: "Today", days: 0 },
+      { name: "Yesterday", days: 1 },
+      { name: "Last Week", days: 7 },
+      { name: "Older", days: 14 }
     ];
-
-    const tbody = document.querySelector('#groupsTable tbody');
+    
+    const tbody = document.querySelector('#groups-table tbody');
 
     tbody.innerHTML = '';
 
@@ -44,8 +43,7 @@ function loadGroups() {
 
       tr.innerHTML = createGroupRowHTML(
 	group.name,
-	group.minDays,
-	group.maxDays);
+	group.days);
       
       tbody.appendChild(tr);
     });
@@ -53,18 +51,15 @@ function loadGroups() {
 }
 
 function saveGroups() {
-  const rows = document.querySelectorAll('#groupsTable tbody tr');
+  const rows = document.querySelectorAll('#groups-table tbody tr');
   const groups = [];
 
   for (const row of rows) {
     const name = row.querySelector('.name').value.trim();
-    const min = parseInt(row.querySelector('.min').value, 10);
-    let max = row.querySelector('.max').value.trim();
+    const days = parseInt(row.querySelector('.days').value, 10);
     
-    max = max === '' ? Infinity : parseInt(max, 10);
-    
-    if (name && !isNaN(min) && !isNaN(max)) {
-      groups.push({ name, minDays: min, maxDays: max });
+    if (name && !isNaN(days)) {
+      groups.push({ name: name, days: days });
     }
   }
 
@@ -78,8 +73,8 @@ function saveGroups() {
   });
 }
 
-document.getElementById('addGroup').addEventListener('click', () => {
-  const tbody = document.querySelector('#groupsTable tbody');
+document.getElementById('add-group').addEventListener('click', () => {
+  const tbody = document.querySelector('#groups-table tbody');
   const tr = document.createElement('tr');
   
   tr.innerHTML = createGroupRowHTML("", "0", "");
@@ -87,10 +82,14 @@ document.getElementById('addGroup').addEventListener('click', () => {
   tbody.appendChild(tr);
 });
 
-document.getElementById('groupsTable').addEventListener('click', (e) => {
+document.getElementById('groups-table').addEventListener('click', (e) => {
   if (e.target.classList.contains('delete')) {
     e.target.closest('tr').remove();
   }
+});
+
+document.getElementById('close').addEventListener('click', (e) => {
+  window.close();
 });
 
 // Initial load
