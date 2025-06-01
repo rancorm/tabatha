@@ -1,7 +1,7 @@
 // Load saved values
-chrome.storage.local.get(['scheduledHour', 'scheduledMinute'], (result) => {
-  document.getElementById('hour').value = result.scheduledHour ?? '';
-  document.getElementById('minute').value = result.scheduledMinute ?? '';
+chrome.storage.local.get(['scheduleHour', 'scheduleMinute'], (result) => {
+  document.getElementById('hour').value = result.scheduleHour ?? '';
+  document.getElementById('minute').value = result.scheduleMinute ?? '';
 });
 
 // Save values when user clicks 'Save'
@@ -10,8 +10,8 @@ document.getElementById('save').addEventListener('click', () => {
   const minute = parseInt(document.getElementById('minute').value, 10);
   
   chrome.storage.local.set({
-    scheduledHour: hour,
-    scheduledMinute: minute
+    scheduleHour: hour,
+    scheduleMinute: minute
   });
 
   saveGroups();
@@ -26,10 +26,11 @@ function createGroupRowHTML(name, days) {
 }
 
 function loadGroups() {
-  chrome.storage.local.get(['rootGroups'], (result) => {
-    const groups = result.rootGroups || [
+  chrome.storage.local.get(['tabGroups'], (result) => {
+    const groups = result.tabGroups || [
       { name: "Today", days: 0 },
       { name: "Yesterday", days: 1 },
+      { name: "This Week", days: 2 },
       { name: "Last Week", days: 7 },
       { name: "Older", days: 14 }
     ];
@@ -63,7 +64,7 @@ function saveGroups() {
     }
   }
 
-  chrome.storage.local.set({ rootGroups: groups }, () => {
+  chrome.storage.local.set({ tabGroups: groups }, () => {
     document.getElementById('status').textContent = "Saved!";
     
     setTimeout(() => document.getElementById('status')

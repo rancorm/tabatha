@@ -6,11 +6,12 @@ console.log("Background script running");
 let tabData = {};
 
 // Groups with days for age calculation
-let rootGroups = [];
+let tabGroups = [];
 
-const defaultRootGroups = [
+const defaultTabGroups = [
   { name: "Today", days: 0 },
-  { name: "Yesterday", days: 1  },
+  { name: "Yesterday", days: 1 },
+  { name: "This Week", days: 2 },
   { name: "Last Week", days: 7 },
   { name: "Older", days: 14 }
 ];
@@ -33,7 +34,7 @@ const scheduleAlarm = ((hour, minute) => {
 
   const delayInMinutes = (next - now) / 60000;
  
-  chrome.alarms.create('scheduledTask', { delayInMinutes });
+  chrome.alarms.create('scheduleTask', { delayInMinutes });
 
   console.log("Task will run again in", delayInMinutes, "minutes");
 });
@@ -56,21 +57,21 @@ const debounceSave = (() => {
 // Load local extension storage on startup
 const localStorage = [
   'tabData',
-  'scheduledHour',
-  'scheduledMinute',
-  'rootGroups'
+  'scheduleHour',
+  'scheduleMinute',
+  'tabGroups'
 ];
 
 chrome.storage.local.get(localStorage, (result) => {
   tabData = result.tabData || {};
-  const hour = result.scheduledHour;
-  const minute = result.scheduledMinute;
+  const hour = result.scheduleHour;
+  const minute = result.scheduleMinute;
 
   if (hour !== undefined && minute !== undefined) {
     scheduleAlarm(hour, minute);
   }
 
-  rootGroups = result.rootGroups || defaultRootGroups;
+  tabGroups = result.tabGroups || defaultTabGroups;
 
   console.log("Local storage loaded");
 });
@@ -96,14 +97,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'scheduledTask') {
+  if (alarm.name === 'scheduleTask') {
     removeOrphanTabData();
     groupTabsByTime();
 
     // Reschedule for the next day
-    chrome.storage.local.get(['scheduledHour', 'scheduledMinute'], (result) => {
-      scheduleAlarm(result.scheduledHour,
-	result.scheduledMinute);
+    chrome.storage.local.get(['scheduleHour', 'scheduleMinute'], (result) => {
+      scheduleAlarm(result.scheduleHour,
+	result.scheduleMinute);
     });
   }
 });
@@ -122,7 +123,7 @@ function createTabGroup(name) {
 function createTabGroups() {
   chrome.tabGroups.query({}, (groups) => {
     const existingTitles = new Set(groups.map(group => group.title));
-    const missingGroupNames = rootGroups
+    const missingGroupNames = tabGroups
       .filter(group => !existingTitles.has(group.name))
       .map(group => group.name);
 
@@ -132,7 +133,7 @@ function createTabGroups() {
 
     if (missingGroupNames.length) {
       const foundGroups = groups.filter(group =>
-        rootGroups.map(g => g.name).includes(group.title)
+        tabGroups.map(g => g.name).includes(group.title)
       );
       
       console.log(`Found groups: ${foundGroups}`);
@@ -148,7 +149,7 @@ function daysAgo(created, now = Date.now()) {
 }
 
 function ageToGroup(age) {
-  return rootGroups.reduce((best, group) => {
+  return tabGroups.reduce((best, group) => {
     return (group.days <= age && (!best || group.days > best.days)) ? group : best;
   }, null);
 }
@@ -158,7 +159,7 @@ function groupTabsByTime() {
     const groups = {};
 
     // Initialize group arrays
-    rootGroups.forEach(group => {
+    tabGroups.forEach(group => {
       groups[group.name] = [];
     });
 
@@ -246,17 +247,17 @@ function printTabData() {
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   if (request.type === "reloadOptions") {
     const reloadOptions = [
-      'scheduledHour',
-      'scheduledMinute',
-      'rootGroups'
+      'scheduleHour',
+      'scheduleMinute',
+      'tabGroups'
     ];
 
     chrome.storage.local.get(reloadOptions, (result) => {
-      rootGroups = result.rootGroups || defaultRootGroups;
+      tabGroups = result.tabGroups || defaultTabGroups;
 
       scheduleAlarm(
-	result.scheduledHour,
-	result.scheduledMinute);
+	result.scheduleHour,
+	result.scheduleMinute);
     
       createTabGroups();
     });
