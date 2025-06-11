@@ -1,5 +1,8 @@
 // background.js
 
+const version = chrome.runtime.getManifest().version;
+
+console.log(`Version: ${version}`);
 console.log("Background script running");
 
 // In-memory cache for real-time tracking
@@ -17,7 +20,7 @@ const defaultTabGroups = [
 ];
 
 const msInDay = 24 * 60 * 60 * 1000;
-const debounceTimeout = 30000;
+const debounceTimeout = 5000;
 
 // Helper functions
 const scheduleAlarm = ((hour, minute) => {
@@ -98,8 +101,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'scheduleTask') {
-    removeOrphanTabData();
-    groupTabsByTime();
+    console.log("Schedule task");
+
+    removeOrphanTabData().then(() => {
+      groupTabsByTime();
+    });
 
     // Reschedule for the next day
     chrome.storage.local.get(['scheduleHour', 'scheduleMinute'], (result) => {
@@ -155,7 +161,7 @@ function ageToGroup(age) {
 }
 
 function groupTabsByTime() {
-  chrome.tabs.query({}, tabs => {
+  chrome.tabs.query({ pinned: false }, tabs => {
     const groups = {};
 
     // Initialize group arrays
@@ -210,23 +216,22 @@ function groupTabsByTime() {
   });
 
   console.log("Tabs moved to groups");
-
 }
 
-function removeOrphanTabData() {
-  for (const key in tabData) {
-    if (tabData.hasOwnProperty(key)) {
+async function removeOrphanTabData() {
+  const keys = Object.keys(tabData);
+
+  await Promise.all(keys.map(key =>
+    new Promise(resolve => {
       chrome.tabs.get(Number(key), function(tab) {
 	if (chrome.runtime.lastError) {
 	  delete tabData[key];
-
-	  console.log(`Remove orphan tab (id: ${key}) data`);
-	} else {
-	  console.log(`Tab (id: ${key}) is valid`);
 	}
+
+	resolve();
       });
-    }
-  }
+    })
+  ));
 }
 
 function printTabData() {
@@ -268,8 +273,10 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
 
 chrome.runtime.onStartup.addListener(() => {
   createTabGroups();
-  removeOrphanTabData();
-  groupTabsByTime();
+  
+  removeOrphanTabData().then(() => {
+    groupTabsByTime();
+  });
 });
 
 chrome.runtime.onInstalled.addListener(() => {

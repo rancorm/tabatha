@@ -8,6 +8,7 @@
       input[type="number"] { width: 6ch; }
       input { font-size: 1em; }
       h1 { text-align: center; }
+      h3 { font-size: 0.75em; font-style: italic; }
       body { font-family: Helvetica; font-size: 1.25em; }
       button { font-size: 1em; }
       div.actions { margin: 0.75em; }
@@ -22,12 +23,16 @@
       <h1>Tabatha Options<h1>
 
       <h2>Schedule</h2>
-      <label for="hour">Hour (0 - 23)</label>
+      <h3>Tabs will be sorted on this 24 hour schedule.</h3>
+
+      <label for="hour">Hour</label>
       <input type="number" id="hour" min="0" max="23">
-      <label for="minute">Minute (0 - 59)</label>
+      <label for="minute">Minute</label>
       <input type="number" id="minute" min="0" max="59">
 
+
       <h2>Groups</h2>
+      <h3>Tab groups and the days it takes to be sorted into that group.</h3>
 
       <table id="groups-table">
 	<thead>
