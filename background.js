@@ -11,6 +11,9 @@ let tabData = {};
 // Groups with days for age calculation
 let tabGroups = [];
 
+let sortOnStartup = true;
+let configLoaded = false;
+
 const defaultTabGroups = [
   { name: "Today", days: 0 },
   { name: "Yesterday", days: 1 },
@@ -60,40 +63,36 @@ const debounceSave = (() => {
 // Load local extension storage on startup
 const localStorage = [
   'tabData',
+  'tabGroups',
   'scheduleHour',
   'scheduleMinute',
-  'tabGroups'
+  'sortOnStartup'
 ];
 
 chrome.storage.local.get(localStorage, (result) => {
   tabData = result.tabData || {};
   const hour = result.scheduleHour;
   const minute = result.scheduleMinute;
+  const sort = result.sortOnStartup;
 
   if (hour !== undefined && minute !== undefined) {
     scheduleAlarm(hour, minute);
   }
 
   tabGroups = result.tabGroups || defaultTabGroups;
+  sortOnStartup = sort;
+  configLoaded = true;
 
   console.log("Local storage loaded");
 });
 
-// Track tab creation time
-chrome.tabs.onCreated.addListener((tab) => {
-  const ts = Date.now();
-
-  tabData[tab.id] = {
-    created: ts,
-  };
-
-  debounceSave();
-});
 
 // Track tab removal
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabData[tabId]) {
     delete tabData[tabId];
+
+    console.log(`Remove tab (id: ${tabId})`);
 
     debounceSave();
   }
@@ -115,43 +114,48 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-function createTabGroup(name) {
-  chrome.tabs.create({}, (tab) => {
-    chrome.tabs.group({ tabIds: tab.id }, (groupId) => {
-      chrome.tabGroups.update(groupId, {
-	title: name,
-	collapsed: true
-      });
-    });
+async function createTabGroup(name) {
+  const tab = await chrome.tabs.create({});
+  const groupId = await chrome.tabs.group({ tabIds: tab.id });
+  await chrome.tabGroups.update(groupId, {
+    title: name,
+    collapsed: true
   });
 }
 
-function createTabGroups() {
-  chrome.tabGroups.query({}, (groups) => {
-    const existingTitles = new Set(groups.map(group => group.title));
-    const missingGroupNames = tabGroups
-      .filter(group => !existingTitles.has(group.name))
-      .map(group => group.name);
+async function createTabGroups() {
+  const groups = await chrome.tabGroups.query({});
+  const existingTitles = new Set(groups.map(group => group.title));
+  const missingGroupNames = tabGroups
+    .filter(group => !existingTitles.has(group.name))
+    .map(group => group.name);
 
-    missingGroupNames.forEach(name => {
-      createTabGroup(name);
-    });
+  // Create missing groups in parallel
+  await Promise.all(missingGroupNames.map(createTabGroup));
 
-    if (missingGroupNames.length) {
-      const foundGroups = groups.filter(group =>
-        tabGroups.map(g => g.name).includes(group.title)
-      );
-      
-      console.log(`Found groups: ${foundGroups}`);
-      console.log(`Create missing groups: ${missingGroupNames}`);
-    } else {
-      console.log("Groups already exist");
-    }
-  });
+  // Refresh groups after creation
+  const updatedGroups = await chrome.tabGroups.query({});
+  const foundGroups = updatedGroups.filter(group =>
+    tabGroups.map(g => g.name).includes(group.title)
+  );
+
+  if (missingGroupNames.length) {
+    console.log(`Found groups: ${foundGroups.map(g => g.title)}`);
+    console.log(`Created missing groups: ${missingGroupNames}`);
+  } else {
+    console.log("Groups already exist");
+  }
 }
 
 function daysAgo(created, now = Date.now()) {
-  return Math.floor((now - created) / msInDay); 
+  const d1 = new Date(created);
+  const d2 = new Date(now);
+
+  // Set both dates to midnight local time
+  d1.setHours(0, 0, 0, 0);
+  d2.setHours(0, 0, 0, 0);
+
+  return Math.floor((d2 - d1) / msInDay); 
 }
 
 function ageToGroup(age) {
@@ -178,7 +182,8 @@ function groupTabsByTime() {
       });
 
       tabs.forEach(tab => {
-        const td = tabData[tab.id];
+	const tabId = tab.id;
+        const td = tabData[tabId];
         
 	if (!td) return;
 
@@ -195,9 +200,9 @@ function groupTabsByTime() {
           return;
         }
 
-        groups[group.name].push(tab.id);
+        groups[group.name].push(tabId);
 
-	console.log(`Move tab (id: ${tab.id}) to group "${group.name}"`);
+	console.log(`Move tab (id: ${tabId}) to group "${group.name}"`);
       });
 
       // Move tabs to their respective groups
@@ -254,11 +259,13 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     const reloadOptions = [
       'scheduleHour',
       'scheduleMinute',
-      'tabGroups'
+      'tabGroups',
+      'sortOnStartup'
     ];
 
     chrome.storage.local.get(reloadOptions, (result) => {
       tabGroups = result.tabGroups || defaultTabGroups;
+      sortOnStartup = result.sortOnStartup;
 
       scheduleAlarm(
 	result.scheduleHour,
@@ -272,13 +279,55 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  createTabGroups();
-  
-  removeOrphanTabData().then(() => {
-    groupTabsByTime();
+  createTabGroups().then(() => {
+    if (sortOnStartup) {
+      console.log("Sorting tabs (startup)");
+
+      removeOrphanTabData().then(() => {
+	groupTabsByTime();
+      });
+    }
   });
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   createTabGroups();
 });
+
+// Track tab creation time
+chrome.tabs.onCreated.addListener((tab) => {
+  const ts = Date.now();
+  const tabId = tab.id;
+
+  if (!configLoaded) {
+    return;
+  } else if (tabData[tabId]) {
+    console.log(`Tab (id: ${tabId}) found in data`);
+    
+    return;
+  } else {
+    tabData[tabId] = {
+      created: ts,
+    };
+
+    console.log(`Add tab (id: ${tabId})`);
+  }
+
+  // Listen for updates to this tab
+  function handleUpdate(updatedTabId, changeInfo, updatedTab) {
+    if (updatedTabId === tabId && changeInfo.status === 'complete') {
+      // Now the title should be available
+      console.log(`Tab update (id: ${updatedTabId}, title: ${updatedTab.title})`);
+
+      // Remove this listener if you only care about the first update
+      chrome.tabs.onUpdated.removeListener(handleUpdate);
+    }
+  }
+
+  chrome.tabs.onUpdated.addListener(handleUpdate);
+
+  debounceSave();
+});
+
+
+

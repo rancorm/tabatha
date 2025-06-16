@@ -6,9 +6,11 @@
       table { border-collapse: collapse; }
       td, th { border: 1px solid #ccc; padding: 0.75em; }
       input[type="number"] { width: 6ch; }
+      input[type="checkbox"] { transform: scale(1.5); }
       input { font-size: 1em; }
       h1 { text-align: center; }
-      h3 { font-size: 0.75em; font-style: italic; }
+      h2 { margin-bottom: 0.25em; }
+      h3 { font-size: 0.9em; color: green; margin-top: 0.5em; }
       body { font-family: Helvetica; font-size: 1.25em; }
       button { font-size: 1em; }
       div.actions { margin: 0.75em; }
@@ -32,7 +34,8 @@
 
 
       <h2>Groups</h2>
-      <h3>Tab groups and the days it takes to be sorted into that group.</h3>
+      <h3>Group name and number of days for sorted to that group. Less than 24 hours = 0, yesterday = 1, etc.</h3>
+      <h3>Customize the sorting of your tabs how you like.</h3>
 
       <table id="groups-table">
 	<thead>
@@ -43,7 +46,11 @@
 	</thead>
 	<tbody></tbody>
       </table>
-    
+   
+      <h2>Flags</h2>
+      <label for="sort-onstartup">Sort tabs on browser startup</label>
+      <input type="checkbox" id="sort-onstartup">
+
       <div class="actions">
 	<button id="add-group">Add Group</button>
 	<button id="save">Save Options</button>
@@ -52,6 +59,7 @@
       
       <div id="status"></div>
     </div>
+
     <script src="options.js"></script>
   </body>
 </html>

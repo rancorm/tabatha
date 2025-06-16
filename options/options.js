@@ -1,20 +1,38 @@
 // Load saved values
-chrome.storage.local.get(['scheduleHour', 'scheduleMinute'], (result) => {
+localStorageValues = [
+  'scheduleHour',
+  'scheduleMinute',
+  'sortOnStartup'
+]
+
+chrome.storage.local.get(localStorageValues, (result) => {
   document.getElementById('hour').value = result.scheduleHour ?? '';
   document.getElementById('minute').value = result.scheduleMinute ?? '';
+  document.getElementById('sort-onstartup').checked = result.sortOnStartup;
 });
 
 // Save values when user clicks 'Save'
 document.getElementById('save').addEventListener('click', () => {
   const hour = parseInt(document.getElementById('hour').value, 10);
   const minute = parseInt(document.getElementById('minute').value, 10);
-  
+  const sort = document.getElementById('sort-onstartup').checked;
+
   chrome.storage.local.set({
     scheduleHour: hour,
-    scheduleMinute: minute
+    scheduleMinute: minute,
+    sortOnStartup: sort
   });
 
+  document.getElementById('status').textContent = "Options Save!";
+
+  setTimeout(() => document.getElementById('status')
+    .textContent = "", 2000);  
+  
+  // Will trigger reloadOptions message to background script
   saveGroups();
+
+
+  chrome.runtime.sendMessage({ type: "reloadOptions" });
 });
 
 function createGroupRowHTML(name, days) {
@@ -64,14 +82,7 @@ function saveGroups() {
     }
   }
 
-  chrome.storage.local.set({ tabGroups: groups }, () => {
-    document.getElementById('status').textContent = "Saved!";
-    
-    setTimeout(() => document.getElementById('status')
-      .textContent = "", 2000);
-    
-    chrome.runtime.sendMessage({ type: "reloadOptions" });
-  });
+  chrome.storage.local.set({ tabGroups: groups });
 }
 
 document.getElementById('add-group').addEventListener('click', () => {
