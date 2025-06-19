@@ -114,6 +114,110 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
+chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
+  if (request.type === "reloadOptions") {
+    const reloadOptions = [
+      'scheduleHour',
+      'scheduleMinute',
+      'tabGroups',
+      'sortOnStartup'
+    ];
+
+    chrome.storage.local.get(reloadOptions, (result) => {
+      tabGroups = result.tabGroups || defaultTabGroups;
+      sortOnStartup = result.sortOnStartup;
+
+      scheduleAlarm(
+	result.scheduleHour,
+	result.scheduleMinute);
+    
+      createTabGroups();
+    });
+
+    console.log("Reload options");
+  }
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  createTabGroups().then(() => {
+    if (sortOnStartup) {
+      console.log("Sorting tabs (startup)");
+
+      removeOrphanTabData().then(() => {
+	groupTabsByTime();
+      });
+    }
+  });
+});
+
+chrome.runtime.onInstalled.addListener((details) => {
+  const reason = details.reason;
+
+  console.log(`Reason: ${reason}`);
+
+  // Create tab groups and populate data with current tabs
+  createTabGroups().then(() => {
+    if (configLoaded) {
+      const tabDataLen = Object.keys(tabData).length;
+      
+      if (reason === "update") {
+	tabDataLen && console.log("Found existing tab data");
+      } else if (reason === "install") {
+	const ts = Date.now();
+	
+	tabDataLen == 0 && console.log("No tab data found, add current tabs.");
+	
+	chrome.tabs.query({ pinned: false }, tabs => {
+	  tabs.forEach(tab => {
+	    const tabId = tab.id;
+
+	    tabData[tabId] = {
+	      created: ts,
+	    };
+
+	    console.log(`Add current tab (id: ${tabId})`);
+	  });
+	});
+      }
+    }
+  });
+});
+
+// Track tab creation time
+chrome.tabs.onCreated.addListener((tab) => {
+  const ts = Date.now();
+  const tabId = tab.id;
+
+  if (!configLoaded) {
+    return;
+  } else if (tabData[tabId]) {
+    console.log(`Tab (id: ${tabId}) found in data`);
+    
+    return;
+  } else {
+    tabData[tabId] = {
+      created: ts,
+    };
+
+    console.log(`Add tab (id: ${tabId})`);
+  }
+
+  // Listen for updates to this tab
+  function handleUpdate(updatedTabId, changeInfo, updatedTab) {
+    if (updatedTabId === tabId && changeInfo.status === 'complete') {
+      // Now the title should be available
+      console.log(`Tab update (id: ${updatedTabId}, title: ${updatedTab.title})`);
+
+      // Remove this listener if you only care about the first update
+      chrome.tabs.onUpdated.removeListener(handleUpdate);
+    }
+  }
+
+  chrome.tabs.onUpdated.addListener(handleUpdate);
+
+  debounceSave();
+});
+
 async function createTabGroup(name) {
   const tab = await chrome.tabs.create({});
   const groupId = await chrome.tabs.group({ tabIds: tab.id });
@@ -220,7 +324,7 @@ function groupTabsByTime() {
     });
   });
 
-  console.log("Tabs moved to groups");
+  console.log("Move tabs to groups");
 }
 
 async function removeOrphanTabData() {
@@ -253,81 +357,4 @@ function printTabData() {
     }
   }
 }
-
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-  if (request.type === "reloadOptions") {
-    const reloadOptions = [
-      'scheduleHour',
-      'scheduleMinute',
-      'tabGroups',
-      'sortOnStartup'
-    ];
-
-    chrome.storage.local.get(reloadOptions, (result) => {
-      tabGroups = result.tabGroups || defaultTabGroups;
-      sortOnStartup = result.sortOnStartup;
-
-      scheduleAlarm(
-	result.scheduleHour,
-	result.scheduleMinute);
-    
-      createTabGroups();
-    });
-
-    console.log("Reload options");
-  }
-});
-
-chrome.runtime.onStartup.addListener(() => {
-  createTabGroups().then(() => {
-    if (sortOnStartup) {
-      console.log("Sorting tabs (startup)");
-
-      removeOrphanTabData().then(() => {
-	groupTabsByTime();
-      });
-    }
-  });
-});
-
-chrome.runtime.onInstalled.addListener(() => {
-  createTabGroups();
-});
-
-// Track tab creation time
-chrome.tabs.onCreated.addListener((tab) => {
-  const ts = Date.now();
-  const tabId = tab.id;
-
-  if (!configLoaded) {
-    return;
-  } else if (tabData[tabId]) {
-    console.log(`Tab (id: ${tabId}) found in data`);
-    
-    return;
-  } else {
-    tabData[tabId] = {
-      created: ts,
-    };
-
-    console.log(`Add tab (id: ${tabId})`);
-  }
-
-  // Listen for updates to this tab
-  function handleUpdate(updatedTabId, changeInfo, updatedTab) {
-    if (updatedTabId === tabId && changeInfo.status === 'complete') {
-      // Now the title should be available
-      console.log(`Tab update (id: ${updatedTabId}, title: ${updatedTab.title})`);
-
-      // Remove this listener if you only care about the first update
-      chrome.tabs.onUpdated.removeListener(handleUpdate);
-    }
-  }
-
-  chrome.tabs.onUpdated.addListener(handleUpdate);
-
-  debounceSave();
-});
-
-
 
