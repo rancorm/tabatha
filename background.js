@@ -153,7 +153,11 @@ chrome.runtime.onInstalled.addListener((details) => {
     const tabDataLen = Object.keys(storageData.tabData).length;
 
     if (reason === "update") {
-      tabDataLen && console.log("Found existing tab data");
+      if (tabDataLen) {
+	tabData = storageData.tabData;
+
+	console.log("Found existing tab data"); 
+      }
     } else if (reason === "install") {
       if (tabDataLen == 0) {
 	const ts = Date.now(); 
