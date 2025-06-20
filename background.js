@@ -5,14 +5,10 @@ const version = chrome.runtime.getManifest().version;
 console.log(`Version: ${version}`);
 console.log("Background script running");
 
-// In-memory cache for real-time tracking
+// Local storage globals
 let tabData = {};
-
-// Groups with days for age calculation
 let tabGroups = [];
-
 let sortOnStartup = true;
-let configLoaded = false;
 
 const defaultTabGroups = [
   { name: "Today", days: 0 },
@@ -69,24 +65,6 @@ const localStorage = [
   'sortOnStartup'
 ];
 
-chrome.storage.local.get(localStorage, (result) => {
-  tabData = result.tabData || {};
-  const hour = result.scheduleHour;
-  const minute = result.scheduleMinute;
-  const sort = result.sortOnStartup;
-
-  if (hour !== undefined && minute !== undefined) {
-    scheduleAlarm(hour, minute);
-  }
-
-  tabGroups = result.tabGroups || defaultTabGroups;
-  sortOnStartup = sort;
-  configLoaded = true;
-
-  console.log("Local storage loaded");
-});
-
-
 // Track tab removal
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabData[tabId]) {
@@ -138,7 +116,21 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   }
 });
 
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
+  const storageData = await loadLocalStorage();
+
+  const hour = storageData.scheduleHour;
+  const minute = storageData.scheduleMinute;
+  const sort = storageData.sortOnStartup;
+
+  if (hour !== undefined && minute !== undefined) {
+    scheduleAlarm(hour, minute);
+  }
+
+  tabData = storageData.tabData || {};
+  tabGroups = storageData.tabGroups || defaultTabGroups;
+  sortOnStartup = sort;
+
   createTabGroups().then(() => {
     if (sortOnStartup) {
       console.log("Sorting tabs (startup)");
@@ -156,17 +148,18 @@ chrome.runtime.onInstalled.addListener((details) => {
   console.log(`Reason: ${reason}`);
 
   // Create tab groups and populate data with current tabs
-  createTabGroups().then(() => {
-    if (configLoaded) {
-      const tabDataLen = Object.keys(tabData).length;
+  createTabGroups().then(async () => {
+    const storageData = await loadLocalStorage();
+    const tabDataLen = Object.keys(storageData.tabData).length;
+
+    if (reason === "update") {
+      tabDataLen && console.log("Found existing tab data");
+    } else if (reason === "install") {
+      if (tabDataLen == 0) {
+	const ts = Date.now(); 
+	
+	console.log("No tab data found, add current tabs.");
       
-      if (reason === "update") {
-	tabDataLen && console.log("Found existing tab data");
-      } else if (reason === "install") {
-	const ts = Date.now();
-	
-	tabDataLen == 0 && console.log("No tab data found, add current tabs.");
-	
 	chrome.tabs.query({ pinned: false }, tabs => {
 	  tabs.forEach(tab => {
 	    const tabId = tab.id;
@@ -188,9 +181,7 @@ chrome.tabs.onCreated.addListener((tab) => {
   const ts = Date.now();
   const tabId = tab.id;
 
-  if (!configLoaded) {
-    return;
-  } else if (tabData[tabId]) {
+  if (tabData[tabId]) {
     console.log(`Tab (id: ${tabId}) found in data`);
     
     return;
@@ -217,6 +208,14 @@ chrome.tabs.onCreated.addListener((tab) => {
 
   debounceSave();
 });
+
+async function loadLocalStorage() {
+  const result = await chrome.storage.local.get(localStorage);
+
+  console.log("Local storage loaded");
+    
+  return result;
+}
 
 async function createTabGroup(name) {
   const tab = await chrome.tabs.create({});
