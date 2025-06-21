@@ -118,10 +118,8 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
 
 chrome.runtime.onStartup.addListener(async () => {
   const storageData = await loadLocalStorage();
-
   const hour = storageData.scheduleHour;
   const minute = storageData.scheduleMinute;
-  const sort = storageData.sortOnStartup;
 
   if (hour !== undefined && minute !== undefined) {
     scheduleAlarm(hour, minute);
@@ -129,7 +127,7 @@ chrome.runtime.onStartup.addListener(async () => {
 
   tabData = storageData.tabData || {};
   tabGroups = storageData.tabGroups || defaultTabGroups;
-  sortOnStartup = sort;
+  sortOnStartup = storageData.sortOnStartup;
 
   createTabGroups().then(() => {
     if (sortOnStartup) {
@@ -150,15 +148,17 @@ chrome.runtime.onInstalled.addListener((details) => {
   // Create tab groups and populate data with current tabs
   createTabGroups().then(async () => {
     const storageData = await loadLocalStorage();
-    const tabDataLen = Object.keys(storageData.tabData).length;
 
     if (reason === "update") {
-      if (tabDataLen) {
-	tabData = storageData.tabData;
+      // Local storage to globals
+      tabData = storageData.tabData;
+      tabGroups = storageData.tabGroups;
+      sortOnStartup = storageData.sortOnStartup;
 
-	console.log("Found existing tab data"); 
-      }
+      console.log("Local storage to globals");
     } else if (reason === "install") {
+      const tabDataLen = Object.keys(storageData.tabData).length;
+      
       if (tabDataLen == 0) {
 	const ts = Date.now(); 
 	
@@ -216,7 +216,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 async function loadLocalStorage() {
   const result = await chrome.storage.local.get(localStorage);
 
-  console.log("Local storage loaded");
+  console.log("Load local storage");
     
   return result;
 }
@@ -224,6 +224,7 @@ async function loadLocalStorage() {
 async function createTabGroup(name) {
   const tab = await chrome.tabs.create({});
   const groupId = await chrome.tabs.group({ tabIds: tab.id });
+  
   await chrome.tabGroups.update(groupId, {
     title: name,
     collapsed: true
@@ -361,3 +362,6 @@ function printTabData() {
   }
 }
 
+function appVersion() {
+  return version;
+}
