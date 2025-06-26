@@ -397,6 +397,7 @@ async function groupTabsByTime() {
 
     const tabAge = daysAgo(td.created);
     const group = ageToGroup(tabAge);
+    const tabId = td.tabId;
 
     if (!group) return;
 
