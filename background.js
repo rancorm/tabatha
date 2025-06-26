@@ -92,7 +92,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     console.log("Schedule task");
 
     await removeOrphanTabData()
-    groupTabsByTime();
+    await groupTabsByTime();
 
     // Reschedule for the next day
     result = await chrome.storage.local.get(['scheduleHour', 'scheduleMinute']);
@@ -141,7 +141,7 @@ chrome.runtime.onStartup.addListener(async () => {
   if (sortOnStartup) {
     console.log("Sorting tabs (startup)");
 
-    groupTabsByTime();
+    await groupTabsByTime();
   }
 
   startupComplete = true;
@@ -374,60 +374,95 @@ function ageToGroup(age) {
 }
 
 async function groupTabsByTime() {
-  const tabs = await chrome.tabs.query({ pinned: false });
-  const groups = {};
+  try {
+    // Gather all tabData keys (could be tabId or fingerprint)
+    for (const key in tabData) {
+      const tabId = tabData[key].tabId;
 
-  // Initialize group arrays
-  tabGroups.forEach(group => {
-    groups[group.name] = [];
-  });
+      try {
+        // Try to get the tab; if it doesn't exist, this will throw
+        await chrome.tabs.get(tabId);
+      } catch (err) {
+	// Tab not found, try to find by fingerprint
+	const { index, windowId, url } = tabData[key].fingerprint;
+	const tabs = await chrome.tabs.query({ index, windowId, url });
 
-  // First, get all existing tab groups and map titles to IDs
-  const existingGroups = await chrome.tabGroups.query({});
-  const groupTitlesToId = {};
+	if (tabs.length > 0) {
+	  // Found a matching tab, update tabId if necessary
+	  tabData[key].tabId = tabs[0].id;
+	  
+	  console.log("Found tab match. Update tab ID.");
+	} else {
+	  // No matching tab found, remove tab data
+	  // ...remove tabDataEntry from tabData...
+	  delete tabData[key];
 
-  existingGroups.forEach(group => {
-    if (group.title) groupTitlesToId[group.title] = group.id;
-  });
-
-  tabs.forEach(tab => {
-    const td = findTabByFingerprint(tab);
-    
-    if (!td) return;
-
-    const tabAge = daysAgo(td.created);
-    const group = ageToGroup(tabAge);
-    const tabId = td.tabId;
-
-    if (!group) return;
-
-    // Check if the group already exists and if the tab is already in it
-    const targetGroupId = groupTitlesToId[group.name];
-    
-    if (targetGroupId !== undefined && tab.groupId === targetGroupId) {
-      // Tab is already in the correct group, skip it
-      return;
+	  console.log(`Remove tab (guid: ${key}) data`);
+	}
+      }
     }
 
-    groups[group.name].push(tabId);
+    const tabs = await chrome.tabs.query({ pinned: false });
+    const groups = {};
 
-    console.log(`Move tab (id: ${tabId}) to group "${group.name}"`);
-  });
+    // Initialize group arrays
+    tabGroups.forEach(group => {
+      groups[group.name] = [];
+    });
 
-  // Move tabs to their respective groups
-  Object.entries(groups).forEach(([groupName, tabIds]) => {
-    if (tabIds.length === 0) return;
+    // Get all existing tab groups and map titles to IDs
+    const existingGroups = await chrome.tabGroups.query({});
+    const groupTitlesToId = {};
 
-    if (groupTitlesToId[groupName]) {
-      chrome.tabs.group({ groupId: groupTitlesToId[groupName], tabIds });
-    } else {
-      chrome.tabs.group({ tabIds }, groupId => {
-	chrome.tabGroups.update(groupId, { title: groupName });
-      });
+    existingGroups.forEach(group => {
+      if (group.title) groupTitlesToId[group.title] = group.id;
+    });
+
+    // Assign tabs to groups
+    tabs.forEach(tab => {
+      const td = findTabByFingerprint(tab);
+
+      if (!td) return;
+
+      const tabAge = daysAgo(td.created);
+      const group = ageToGroup(tabAge);
+      const tabId = td.tabId;
+
+      if (!group || tabId == null) return;
+
+      // Check if the group already exists and if the tab is already in it
+      const targetGroupId = groupTitlesToId[group.name];
+      
+      if (targetGroupId !== undefined && tab.groupId === targetGroupId) {
+        // Tab is already in the correct group, skip it
+        return;
+      }
+
+      groups[group.name].push(tabId);
+      
+      console.log(`Move tab (id: ${tabId}, title: "${tab.title}") to group "${group.name}"`);
+    });
+
+    // Move tabs to their respective groups
+    for (const [groupName, tabIds] of Object.entries(groups)) {
+      if (tabIds.length === 0) continue;
+      
+      try {
+        if (groupTitlesToId[groupName]) {
+          await chrome.tabs.group({ groupId: groupTitlesToId[groupName], tabIds });
+        } else {
+          const groupId = await chrome.tabs.group({ tabIds });
+          await chrome.tabGroups.update(groupId, { title: groupName });
+        }
+      } catch (error) {
+        console.error(`Error grouping tabs for "${groupName}":`, error);
+      }
     }
-  });
 
-  console.log("Move tabs to groups");
+    console.log("Move tabs to groups complete");
+  } catch (err) {
+    console.error("Error in groupTabsByTime:", err);
+  }
 }
 
 function printTabData() {
