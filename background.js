@@ -9,6 +9,7 @@ console.log("Background script running");
 let tabData = {};
 let tabGroups = [];
 let sortOnStartup = true;
+let startupComplete = false;
 
 const defaultTabGroups = [
   { name: "Today", days: 0 },
@@ -67,32 +68,39 @@ const localStorage = [
 
 // Track tab removal
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabData[tabId]) {
-    delete tabData[tabId];
-
-    console.log(`Remove tab (id: ${tabId})`);
-
+  let guidToRemove = null;
+  
+  for (const guid in tabData) {
+    if (tabData[guid].tabId === tabId) {
+      guidToRemove = guid;
+      
+      break;
+    }
+  }
+  
+  if (guidToRemove) {
+    delete tabData[guidToRemove];
+    
+    console.log(`Remove tab (guid: ${guidToRemove}, id: ${tabId})`);
+    
     debounceSave();
   }
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'scheduleTask') {
     console.log("Schedule task");
 
-    removeOrphanTabData().then(() => {
-      groupTabsByTime();
-    });
+    await removeOrphanTabData()
+    groupTabsByTime();
 
     // Reschedule for the next day
-    chrome.storage.local.get(['scheduleHour', 'scheduleMinute'], (result) => {
-      scheduleAlarm(result.scheduleHour,
-	result.scheduleMinute);
-    });
+    result = await chrome.storage.local.get(['scheduleHour', 'scheduleMinute']);
+    scheduleAlarm(result.scheduleHour, result.scheduleMinute);
   }
 });
 
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
+chrome.runtime.onMessage.addListener(async function(request, sender, sendResponse) {
   if (request.type === "reloadOptions") {
     const reloadOptions = [
       'scheduleHour',
@@ -101,16 +109,15 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
       'sortOnStartup'
     ];
 
-    chrome.storage.local.get(reloadOptions, (result) => {
-      tabGroups = result.tabGroups || defaultTabGroups;
-      sortOnStartup = result.sortOnStartup;
+    result = await chrome.storage.local.get(reloadOptions);
+    tabGroups = result.tabGroups || defaultTabGroups;
+    sortOnStartup = result.sortOnStartup;
 
-      scheduleAlarm(
-	result.scheduleHour,
-	result.scheduleMinute);
-    
-      createTabGroups();
-    });
+    scheduleAlarm(
+      result.scheduleHour,
+      result.scheduleMinute);
+  
+    createTabGroups();
 
     console.log("Reload options");
   }
@@ -129,82 +136,87 @@ chrome.runtime.onStartup.addListener(async () => {
   tabGroups = storageData.tabGroups || defaultTabGroups;
   sortOnStartup = storageData.sortOnStartup;
 
-  createTabGroups().then(() => {
-    if (sortOnStartup) {
-      console.log("Sorting tabs (startup)");
+  await createTabGroups();
+  
+  if (sortOnStartup) {
+    console.log("Sorting tabs (startup)");
 
-      removeOrphanTabData().then(() => {
-	groupTabsByTime();
-      });
-    }
-  });
+    groupTabsByTime();
+  }
+
+  startupComplete = true;
+
+  console.log("On startup");
 });
 
-chrome.runtime.onInstalled.addListener((details) => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   const reason = details.reason;
-
+  const storageData = await loadLocalStorage();
+  
   console.log(`Reason: ${reason}`);
 
   // Create tab groups and populate data with current tabs
-  createTabGroups().then(async () => {
-    const storageData = await loadLocalStorage();
+  await createTabGroups();
 
-    if (reason === "update") {
-      // Local storage to globals
-      tabData = storageData.tabData;
-      tabGroups = storageData.tabGroups;
-      sortOnStartup = storageData.sortOnStartup;
+  if (reason === "update") {
+    // Local storage to globals
+    tabData = storageData.tabData;
+    tabGroups = storageData.tabGroups;
+    sortOnStartup = storageData.sortOnStartup;
 
-      console.log("Local storage to globals");
-    } else if (reason === "install") {
-      const tabDataLen = Object.keys(storageData.tabData).length;
-      
-      if (tabDataLen == 0) {
-	const ts = Date.now(); 
-	
-	console.log("No tab data found, add current tabs.");
-      
-	chrome.tabs.query({ pinned: false }, tabs => {
-	  tabs.forEach(tab => {
-	    const tabId = tab.id;
+    console.log("Local storage to globals");
+  } else if (reason === "install") {
+    const tabDataLen = Object.keys(storageData.tabData).length;
+ 
+    if (tabDataLen == 0) {
+      console.log("No tab data found, add current tabs.");
 
-	    tabData[tabId] = {
-	      created: ts,
-	    };
-
-	    console.log(`Add current tab (id: ${tabId})`);
-	  });
-	});
-      }
+      tabs = await chrome.tabs.query({ pinned: false });
+      tabs.forEach(tab => {
+	const tabId = tab.id;
+	  
+	addTab(tab);
+	  
+	console.log(`Add current tab (id: ${tabId})`);
+      });
     }
-  });
+  }
+
+  startupComplete = true;
 });
 
 // Track tab creation time
 chrome.tabs.onCreated.addListener((tab) => {
-  const ts = Date.now();
-  const tabId = tab.id;
+  let foundTab = findTabByFingerprint(tab);
+  let tabId = tab.id;
 
-  if (tabData[tabId]) {
+  if (!startupComplete) return;
+
+  if (foundTab) {
+    tabId = foundTab.tabId;
+
     console.log(`Tab (id: ${tabId}) found in data`);
-    
-    return;
   } else {
-    tabData[tabId] = {
-      created: ts,
-    };
+    newTab = addTab(tab);
 
-    console.log(`Add tab (id: ${tabId})`);
+    console.log(`Add tab (guid: ${newTab.guid}, id: ${newTab.tabId})`);
   }
 
   // Listen for updates to this tab
   function handleUpdate(updatedTabId, changeInfo, updatedTab) {
     if (updatedTabId === tabId && changeInfo.status === 'complete') {
-      // Now the title should be available
-      console.log(`Tab update (id: ${updatedTabId}, title: ${updatedTab.title})`);
+      const foundUpdatedTab = findTabById(updatedTab);
+     
+      // Update tab data URL when tab updates
+      if (foundUpdatedTab) {
+	const guid = foundUpdatedTab.guid;
 
-      // Remove this listener if you only care about the first update
-      chrome.tabs.onUpdated.removeListener(handleUpdate);
+	tabData[guid].fingerprint.url = updatedTab.url;
+
+	console.log(`Tab update (guid: ${guid}, id: ${updatedTabId}, title: ${updatedTab.title})`);
+
+	debounceSave();
+      }
     }
   }
 
@@ -212,6 +224,95 @@ chrome.tabs.onCreated.addListener((tab) => {
 
   debounceSave();
 });
+
+function addTab(tab) {
+  const guid = generateGUID();
+  const now = Date.now();
+
+  tabData[guid] = {
+    guid: guid,
+    created: now,
+    tabId: tab.id,
+    fingerprint: {
+      url: tab.url,
+      windowId: tab.windowId,
+      index: tab.index,
+    }
+  };
+
+  return tabData[guid];
+}
+
+function generateGUID() {
+  return crypto.randomUUID();
+}
+
+function findTabById(tab) {
+  const tabId = tab.id;
+
+  for (const guid in tabData) {
+    if (tabData[guid].tabId == tabId) {
+      return tabData[guid];
+    }
+  }
+
+  return null;
+}
+
+function findTabByFingerprint(tab) {
+  const { url, windowId, index } = tab;
+
+  for (const guid in tabData) {
+    const fp = tabData[guid].fingerprint;
+
+    if (
+      fp.url === url &&
+      fp.windowId === windowId &&
+      fp.index === index
+    ) {
+      return tabData[guid];
+    }
+  }
+
+  return null;
+}
+
+async function removeOrphanTabData() {
+  const tabs = await new Promise(resolve => chrome.tabs.query({}, resolve));
+  const existingTabIds = new Set(tabs.map(tab => tab.id));
+  let changed = false;
+
+  for (const guid in tabData) {
+    const entry = tabData[guid];
+    const { tabId, fingerprint } = entry;
+
+    // Check for tabId match
+    let found = tabId && existingTabIds.has(tabId);
+
+    // If not found by tabId, check for URL and windowId match
+    if (!found && fingerprint && fingerprint.url && fingerprint.windowId) {
+      found = tabs.some(tab =>
+        tab.url === fingerprint.url &&
+        tab.windowId === fingerprint.windowId
+      );
+    }
+
+    // If not found by either method, remove the entry
+    if (!found) {
+      console.log(`Remove tab (guid: ${guid}, id: ${entry.tabId})`);
+
+      delete tabData[guid];
+      
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    console.log("Save after orphan data clean up");
+
+    debounceSave();
+  }
+}
 
 async function loadLocalStorage() {
   const result = await chrome.storage.local.get(localStorage);
@@ -272,79 +373,60 @@ function ageToGroup(age) {
   }, null);
 }
 
-function groupTabsByTime() {
-  chrome.tabs.query({ pinned: false }, tabs => {
-    const groups = {};
+async function groupTabsByTime() {
+  const tabs = await chrome.tabs.query({ pinned: false });
+  const groups = {};
 
-    // Initialize group arrays
-    tabGroups.forEach(group => {
-      groups[group.name] = [];
-    });
+  // Initialize group arrays
+  tabGroups.forEach(group => {
+    groups[group.name] = [];
+  });
 
-    // First, get all existing tab groups and map titles to IDs
-    chrome.tabGroups.query({}, existingGroups => {
-      const groupTitlesToId = {};
+  // First, get all existing tab groups and map titles to IDs
+  const existingGroups = await chrome.tabGroups.query({});
+  const groupTitlesToId = {};
 
-      existingGroups.forEach(group => {
-        if (group.title) groupTitlesToId[group.title] = group.id;
+  existingGroups.forEach(group => {
+    if (group.title) groupTitlesToId[group.title] = group.id;
+  });
+
+  tabs.forEach(tab => {
+    const td = findTabByFingerprint(tab);
+    
+    if (!td) return;
+
+    const tabAge = daysAgo(td.created);
+    const group = ageToGroup(tabAge);
+
+    if (!group) return;
+
+    // Check if the group already exists and if the tab is already in it
+    const targetGroupId = groupTitlesToId[group.name];
+    
+    if (targetGroupId !== undefined && tab.groupId === targetGroupId) {
+      // Tab is already in the correct group, skip it
+      return;
+    }
+
+    groups[group.name].push(tabId);
+
+    console.log(`Move tab (id: ${tabId}) to group "${group.name}"`);
+  });
+
+  // Move tabs to their respective groups
+  Object.entries(groups).forEach(([groupName, tabIds]) => {
+    if (tabIds.length === 0) return;
+
+    if (groupTitlesToId[groupName]) {
+      chrome.tabs.group({ groupId: groupTitlesToId[groupName], tabIds });
+    } else {
+      chrome.tabs.group({ tabIds }, groupId => {
+	chrome.tabGroups.update(groupId, { title: groupName });
       });
-
-      tabs.forEach(tab => {
-	const tabId = tab.id;
-        const td = tabData[tabId];
-        
-	if (!td) return;
-
-        const tabAge = daysAgo(td.created);
-        const group = ageToGroup(tabAge);
-
-        if (!group) return;
-
-        // Check if the group already exists and if the tab is already in it
-        const targetGroupId = groupTitlesToId[group.name];
-        
-	if (targetGroupId !== undefined && tab.groupId === targetGroupId) {
-          // Tab is already in the correct group, skip it
-          return;
-        }
-
-        groups[group.name].push(tabId);
-
-	console.log(`Move tab (id: ${tabId}) to group "${group.name}"`);
-      });
-
-      // Move tabs to their respective groups
-      Object.entries(groups).forEach(([groupName, tabIds]) => {
-        if (tabIds.length === 0) return;
-
-        if (groupTitlesToId[groupName]) {
-          chrome.tabs.group({ groupId: groupTitlesToId[groupName], tabIds });
-        } else {
-          chrome.tabs.group({ tabIds }, groupId => {
-            chrome.tabGroups.update(groupId, { title: groupName });
-          });
-        }
-      });
-    });
+    }
   });
 
   console.log("Move tabs to groups");
-}
-
-async function removeOrphanTabData() {
-  const keys = Object.keys(tabData);
-
-  await Promise.all(keys.map(key =>
-    new Promise(resolve => {
-      chrome.tabs.get(Number(key), function(tab) {
-	if (chrome.runtime.lastError) {
-	  delete tabData[key];
-	}
-
-	resolve();
-      });
-    })
-  ));
 }
 
 function printTabData() {
@@ -357,7 +439,7 @@ function printTabData() {
       tab = tabData[key];
       tabAge = daysAgo(tab.created);
 
-      console.log(`Tab id: ${key}, created: ${tab.created}, age: ${tabAge}`);
+      console.log(`Tab (guid: ${key}, id: ${tab.tabId}, created: ${tab.created}, age: ${tabAge})`);
     }
   }
 }
