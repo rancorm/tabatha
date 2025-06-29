@@ -9,7 +9,7 @@ console.log("Background script running");
 let tabData = {};
 let tabGroups = [];
 let sortOnStartup = true;
-let startupComplete = false;
+let isStartupComplete = false;
 
 const defaultTabGroups = [
   { name: "Today", days: 0 },
@@ -124,17 +124,7 @@ chrome.runtime.onMessage.addListener(async function(request, sender, sendRespons
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  const storageData = await loadLocalStorage();
-  const hour = storageData.scheduleHour;
-  const minute = storageData.scheduleMinute;
-
-  if (hour !== undefined && minute !== undefined) {
-    scheduleAlarm(hour, minute);
-  }
-
-  tabData = storageData.tabData || {};
-  tabGroups = storageData.tabGroups || defaultTabGroups;
-  sortOnStartup = storageData.sortOnStartup;
+  if (!isStartupComplete) await handleStartup();
 
   await createTabGroups();
   
@@ -144,27 +134,16 @@ chrome.runtime.onStartup.addListener(async () => {
     await groupTabsByTime();
   }
 
-  startupComplete = true;
-
-  console.log("On startup");
+  console.log("Startup complete");
 });
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   const reason = details.reason;
-  const storageData = await loadLocalStorage();
   
   console.log(`Reason: ${reason}`);
 
-  // Create tab groups and populate data with current tabs
-  await createTabGroups();
-
   if (reason === "update") {
-    // Local storage to globals
-    tabData = storageData.tabData;
-    tabGroups = storageData.tabGroups;
-    sortOnStartup = storageData.sortOnStartup;
-
-    console.log("Local storage to globals");
+    if (!isStartupComplete) await handleStartup();
   } else if (reason === "install") {
     const tabDataLen = Object.keys(storageData.tabData).length;
  
@@ -180,17 +159,20 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 	console.log(`Add current tab (id: ${tabId})`);
       });
     }
+    
+    // Create tab groups and populate data with current tabs
+    await createTabGroups();
+    
+    isStartupComplete = true;
   }
-
-  startupComplete = true;
 });
 
 // Track tab creation time
-chrome.tabs.onCreated.addListener((tab) => {
+chrome.tabs.onCreated.addListener(async (tab) => {
+  if (!isStartupComplete) await handleStartup();
+
   let foundTab = findTabByFingerprint(tab);
   let tabId = tab.id;
-
-  if (!startupComplete) return;
 
   if (foundTab) {
     tabId = foundTab.tabId;
@@ -224,6 +206,36 @@ chrome.tabs.onCreated.addListener((tab) => {
 
   debounceSave();
 });
+
+async function handleStartup() {
+  try {
+    const storageData = await loadLocalStorage();
+    const hour = storageData.scheduleHour;
+    const minute = storageData.scheduleMinute;
+
+    if (hour !== undefined && minute !== undefined) {
+      await scheduleAlarm(hour, minute);
+    }
+
+    tabData = storageData.tabData || {};
+    tabGroups = storageData.tabGroups || defaultTabGroups;
+    sortOnStartup = storageData.sortOnStartup;
+
+    await createTabGroups();
+
+    if (sortOnStartup) {
+      console.log("Sorting tabs (startup)");
+      
+      await groupTabsByTime();
+    }
+
+    isStartupComplete = true;
+    
+    console.log("Startup complete");
+  } catch (error) {
+    console.error("Error during startup:", error);
+  }
+}
 
 function addTab(tab) {
   const guid = generateGUID();
