@@ -397,6 +397,10 @@ async function groupTabsByTime() {
       } catch (err) {
 	// Tab not found, try to find by fingerprint
 	const { index, windowId, url } = tabData[key].fingerprint;
+
+	// Ignore tabs with no URL
+	if (url === '') continue;
+
 	const tabs = await chrome.tabs.query({ index, windowId, url });
 
 	if (tabs.length > 0) {
