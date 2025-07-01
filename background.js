@@ -126,14 +126,6 @@ chrome.runtime.onMessage.addListener(async function(request, sender, sendRespons
 chrome.runtime.onStartup.addListener(async () => {
   if (!isStartupComplete) await handleStartup();
 
-  await createTabGroups();
-  
-  if (sortOnStartup) {
-    console.log("Sorting tabs (startup)");
-
-    await groupTabsByTime();
-  }
-
   console.log("Startup complete");
 });
 
@@ -491,7 +483,7 @@ function printTabData() {
       tab = tabData[key];
       tabAge = daysAgo(tab.created);
 
-      console.log(`Tab (guid: ${key}, id: ${tab.tabId}, created: ${tab.created}, age: ${tabAge})`);
+      console.log(`Tab (guid: ${key}, id: ${tab.tabId}, created: ${tab.created}, age: ${tabAge}), url ${tab.fingerprint.url}`);
     }
   }
 }
